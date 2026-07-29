@@ -6,29 +6,63 @@ struct WeatherResponse: Codable {
     let latitude: Double
     let longitude: Double
     let timezone: String
-    let currentWeather: CurrentWeatherAPI
+    let current: CurrentAPI
     let hourly: HourlyAPI
     let daily: DailyAPI
 
     enum CodingKeys: String, CodingKey {
-        case latitude, longitude, timezone
-        case currentWeather = "current_weather"
-        case hourly, daily
+        case latitude, longitude, timezone, current, hourly, daily
     }
 }
 
-struct CurrentWeatherAPI: Codable {
-    let temperature: Double
-    let windspeed: Double
-    let winddirection: Double
-    let weathercode: Int
+struct CurrentAPI: Codable {
     let time: String
+    let temperature2m: Double
+    let relativeHumidity2m: Int
+    let apparentTemperature: Double
     let isDay: Int
+    let precipitation: Double
+    let weathercode: Int
+    let surfacePressure: Double
+    let windSpeed10m: Double
+    let windDirection10m: Double
 
     enum CodingKeys: String, CodingKey {
-        case temperature, windspeed, winddirection, weathercode, time
+        case time
+        case temperature2m = "temperature_2m"
+        case relativeHumidity2m = "relative_humidity_2m"
+        case apparentTemperature = "apparent_temperature"
         case isDay = "is_day"
+        case precipitation
+        case weathercode = "weather_code"
+        case surfacePressure = "surface_pressure"
+        case windSpeed10m = "wind_speed_10m"
+        case windDirection10m = "wind_direction_10m"
     }
+}
+
+/// Decodes a numeric array leniently: Open-Meteo can return `null` entries in
+/// arrays like `uv_index` or `visibility` for certain locations/models. A plain
+/// `[Double]`/`[Int]` fails to decode entirely if even one element is null, which
+/// previously caused the whole response to be rejected. Nulls are mapped to `fallback`.
+private func decodeLenientArray<T: LosslessStringConvertible & Decodable>(
+    _ container: KeyedDecodingContainer<HourlyAPI.CodingKeys>,
+    key: HourlyAPI.CodingKeys,
+    fallback: T
+) throws -> [T] {
+    guard container.contains(key) else { return [] }
+    let optionalValues = try container.decode([T?].self, forKey: key)
+    return optionalValues.map { $0 ?? fallback }
+}
+
+private func decodeLenientArray<T: LosslessStringConvertible & Decodable>(
+    _ container: KeyedDecodingContainer<DailyAPI.CodingKeys>,
+    key: DailyAPI.CodingKeys,
+    fallback: T
+) throws -> [T] {
+    guard container.contains(key) else { return [] }
+    let optionalValues = try container.decode([T?].self, forKey: key)
+    return optionalValues.map { $0 ?? fallback }
 }
 
 struct HourlyAPI: Codable {
@@ -36,12 +70,29 @@ struct HourlyAPI: Codable {
     let temperature2m: [Double]
     let weathercode: [Int]
     let precipitationProbability: [Int]
+    let relativeHumidity2m: [Int]
+    let uvIndex: [Double]
+    let visibility: [Double]
 
     enum CodingKeys: String, CodingKey {
         case time
         case temperature2m = "temperature_2m"
-        case weathercode
+        case weathercode = "weather_code"
         case precipitationProbability = "precipitation_probability"
+        case relativeHumidity2m = "relative_humidity_2m"
+        case uvIndex = "uv_index"
+        case visibility
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        time = try container.decode([String].self, forKey: .time)
+        temperature2m = try decodeLenientArray(container, key: .temperature2m, fallback: 0)
+        weathercode = try decodeLenientArray(container, key: .weathercode, fallback: 0)
+        precipitationProbability = try decodeLenientArray(container, key: .precipitationProbability, fallback: 0)
+        relativeHumidity2m = try decodeLenientArray(container, key: .relativeHumidity2m, fallback: 0)
+        uvIndex = try decodeLenientArray(container, key: .uvIndex, fallback: 0)
+        visibility = try decodeLenientArray(container, key: .visibility, fallback: 10000)
     }
 }
 
@@ -53,6 +104,8 @@ struct DailyAPI: Codable {
     let precipitationProbabilityMax: [Int]
     let sunrise: [String]
     let sunset: [String]
+    let uvIndexMax: [Double]
+    let windSpeed10mMax: [Double]
 
     enum CodingKeys: String, CodingKey {
         case time, weathercode
@@ -60,6 +113,102 @@ struct DailyAPI: Codable {
         case temperatureMin = "temperature_2m_min"
         case precipitationProbabilityMax = "precipitation_probability_max"
         case sunrise, sunset
+        case uvIndexMax = "uv_index_max"
+        case windSpeed10mMax = "wind_speed_10m_max"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        time = try container.decode([String].self, forKey: .time)
+        weathercode = try decodeLenientArray(container, key: .weathercode, fallback: 0)
+        temperatureMax = try decodeLenientArray(container, key: .temperatureMax, fallback: 0)
+        temperatureMin = try decodeLenientArray(container, key: .temperatureMin, fallback: 0)
+        precipitationProbabilityMax = try decodeLenientArray(container, key: .precipitationProbabilityMax, fallback: 0)
+        sunrise = try decodeLenientArray(container, key: .sunrise, fallback: "")
+        sunset = try decodeLenientArray(container, key: .sunset, fallback: "")
+        uvIndexMax = try decodeLenientArray(container, key: .uvIndexMax, fallback: 0)
+        windSpeed10mMax = try decodeLenientArray(container, key: .windSpeed10mMax, fallback: 0)
+    }
+}
+
+// MARK: - Air Quality (Open-Meteo Air Quality API)
+
+struct AirQuality {
+    let europeanAQI: Int
+    let pm2_5: Double
+    let pm10: Double
+
+    var category: String {
+        switch europeanAQI {
+        case ..<20: return "Good"
+        case 20..<40: return "Fair"
+        case 40..<60: return "Moderate"
+        case 60..<80: return "Poor"
+        case 80..<100: return "Very Poor"
+        default: return "Extremely Poor"
+        }
+    }
+
+    var colorHex: String {
+        switch europeanAQI {
+        case ..<20: return "4CAF50"
+        case 20..<40: return "8BC34A"
+        case 40..<60: return "FFC107"
+        case 60..<80: return "FF9800"
+        case 80..<100: return "F44336"
+        default: return "9C27B0"
+        }
+    }
+}
+
+// MARK: - Units
+
+enum TemperatureUnit: String, CaseIterable, Identifiable, Codable {
+    case celsius, fahrenheit
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .celsius: return "Celsius (°C)"
+        case .fahrenheit: return "Fahrenheit (°F)"
+        }
+    }
+
+    var symbol: String { self == .celsius ? "°C" : "°F" }
+
+    func convert(fromCelsius celsius: Double) -> Double {
+        switch self {
+        case .celsius: return celsius
+        case .fahrenheit: return celsius * 9 / 5 + 32
+        }
+    }
+
+    func string(fromCelsius celsius: Double) -> String {
+        "\(Int(convert(fromCelsius: celsius).rounded()))°"
+    }
+}
+
+enum WindSpeedUnit: String, CaseIterable, Identifiable, Codable {
+    case kmh, mph
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .kmh: return "Kilometers/hour (km/h)"
+        case .mph: return "Miles/hour (mph)"
+        }
+    }
+
+    var shortLabel: String { self == .kmh ? "km/h" : "mph" }
+
+    func convert(fromKmh kmh: Double) -> Double {
+        self == .kmh ? kmh : kmh * 0.621371
+    }
+
+    func string(fromKmh kmh: Double) -> String {
+        "\(Int(convert(fromKmh: kmh).rounded())) \(shortLabel)"
     }
 }
 
@@ -67,10 +216,41 @@ struct DailyAPI: Codable {
 
 struct CurrentWeather {
     let temperature: Double
-    let feelsLikeCode: Int
+    let feelsLike: Double
+    let humidity: Int
     let windSpeed: Double
+    let windDirection: Double
+    let pressure: Double
+    let uvIndex: Double
+    let visibility: Double
     let isDay: Bool
     let condition: WeatherCondition
+
+    /// 16-point compass label for the current wind direction.
+    var windDirectionLabel: String {
+        let directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                           "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+        let index = Int((windDirection.truncatingRemainder(dividingBy: 360) / 22.5).rounded()) % 16
+        return directions[index]
+    }
+
+    var uvIndexCategory: String {
+        switch uvIndex {
+        case ..<3: return "Low"
+        case 3..<6: return "Moderate"
+        case 6..<8: return "High"
+        case 8..<11: return "Very High"
+        default: return "Extreme"
+        }
+    }
+
+    var visibilityDescription: String {
+        let km = visibility / 1000
+        if km >= 10 { return "Excellent" }
+        if km >= 4 { return "Good" }
+        if km >= 1 { return "Moderate" }
+        return "Poor"
+    }
 }
 
 struct HourlyForecast: Identifiable {
@@ -88,6 +268,9 @@ struct DailyForecast: Identifiable {
     let minTemp: Double
     let condition: WeatherCondition
     let precipitationChance: Int
+    let uvIndexMax: Double
+    let sunrise: Date
+    let sunset: Date
 }
 
 struct WeatherData {
@@ -176,6 +359,25 @@ enum WeatherCondition {
         case .thunderstorm: return "Thunderstorm"
         case .thunderstormHail: return "Thunderstorm with Hail"
         case .unknown: return "Unknown"
+        }
+    }
+
+    /// Whether this condition should trigger the animated precipitation overlay.
+    var isPrecipitating: Bool {
+        switch self {
+        case .drizzle, .rain, .freezingRain, .rainShowers, .thunderstorm, .thunderstormHail:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isSnowy: Bool {
+        switch self {
+        case .snow, .snowGrains, .snowShowers:
+            return true
+        default:
+            return false
         }
     }
 

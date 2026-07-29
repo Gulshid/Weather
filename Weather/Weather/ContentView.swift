@@ -3,12 +3,21 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = WeatherViewModel()
     @State private var showSearch = false
+    @State private var showSettings = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         ZStack {
             backgroundGradient
                 .ignoresSafeArea()
+
+            if let data = viewModel.weatherData, data.current.condition.isPrecipitating {
+                WeatherParticlesView(kind: .rain)
+                    .ignoresSafeArea()
+            } else if let data = viewModel.weatherData, data.current.condition.isSnowy {
+                WeatherParticlesView(kind: .snow)
+                    .ignoresSafeArea()
+            }
 
             if viewModel.isLoading && viewModel.weatherData == nil {
                 loadingView
@@ -27,6 +36,9 @@ struct ContentView: View {
                 viewModel.requestCurrentLocation()
             }
         }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(viewModel: viewModel)
+        }
         .alert("Something went wrong", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -41,12 +53,33 @@ struct ContentView: View {
             VStack(spacing: 24) {
                 topBar
 
-                CurrentWeatherView(data: data)
-                    .padding(.top, 8)
+                CurrentWeatherView(
+                    data: data,
+                    temperatureUnit: viewModel.temperatureUnit,
+                    windSpeedUnit: viewModel.windSpeedUnit
+                )
+                .padding(.top, 8)
 
-                HourlyForecastView(hourly: data.hourly)
+                if let lastUpdated = viewModel.lastUpdated {
+                    Text("Updated \(lastUpdated, style: .relative) ago")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
 
-                DailyForecastView(daily: data.daily)
+                HourlyForecastView(hourly: data.hourly, temperatureUnit: viewModel.temperatureUnit)
+
+                DailyForecastView(daily: data.daily, temperatureUnit: viewModel.temperatureUnit)
+
+                WeatherDetailGridView(
+                    current: data.current,
+                    airQuality: viewModel.airQuality,
+                    temperatureUnit: viewModel.temperatureUnit,
+                    windSpeedUnit: viewModel.windSpeedUnit
+                )
+
+                if let today = data.daily.first {
+                    SunArcView(sunrise: today.sunrise, sunset: today.sunset)
+                }
 
                 savedCitiesSection
             }
@@ -60,6 +93,7 @@ struct ContentView: View {
     private var topBar: some View {
         HStack {
             Button {
+                Haptics.tap()
                 viewModel.requestCurrentLocation()
             } label: {
                 Image(systemName: "location.fill")
@@ -72,9 +106,31 @@ struct ContentView: View {
             Spacer()
 
             Button {
+                Haptics.tap()
+                viewModel.toggleSaveCurrentCity()
+            } label: {
+                Image(systemName: viewModel.isCurrentCitySaved ? "star.fill" : "star")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(.white.opacity(0.2), in: Circle())
+            }
+            .disabled(viewModel.weatherData == nil)
+
+            Button {
                 withAnimation(.spring(response: 0.3)) { showSearch = true }
             } label: {
                 Image(systemName: "magnifyingglass")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(.white.opacity(0.2), in: Circle())
+            }
+
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 40, height: 40)
@@ -96,6 +152,7 @@ struct ContentView: View {
 
                     ForEach(viewModel.savedCities) { city in
                         SavedCityRow(city: city) {
+                            Haptics.tap()
                             Task { await viewModel.loadSavedCity(city) }
                         } onDelete: {
                             viewModel.removeSavedCity(city)

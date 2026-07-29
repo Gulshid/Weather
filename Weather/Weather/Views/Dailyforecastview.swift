@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DailyForecastView: View {
     let daily: [DailyForecast]
+    let temperatureUnit: TemperatureUnit
 
     private var overallMin: Double { daily.map(\.minTemp).min() ?? 0 }
     private var overallMax: Double { daily.map(\.maxTemp).max() ?? 1 }
@@ -48,10 +49,10 @@ struct DailyForecastView: View {
                 Spacer().frame(width: 34)
             }
 
-            Text("\(Int(day.minTemp.rounded()))°")
+            Text(temperatureUnit.string(fromCelsius: day.minTemp))
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.6))
-                .frame(width: 30, alignment: .trailing)
+                .frame(width: 34, alignment: .trailing)
 
             TemperatureRangeBar(
                 low: day.minTemp, high: day.maxTemp,
@@ -59,10 +60,10 @@ struct DailyForecastView: View {
             )
             .frame(height: 4)
 
-            Text("\(Int(day.maxTemp.rounded()))°")
+            Text(temperatureUnit.string(fromCelsius: day.maxTemp))
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.white)
-                .frame(width: 30, alignment: .trailing)
+                .frame(width: 34, alignment: .trailing)
         }
         .padding(.vertical, 10)
     }

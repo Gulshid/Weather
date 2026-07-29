@@ -2,6 +2,8 @@ import SwiftUI
 
 struct CurrentWeatherView: View {
     let data: WeatherData
+    let temperatureUnit: TemperatureUnit
+    let windSpeedUnit: WindSpeedUnit
 
     var body: some View {
         VStack(spacing: 8) {
@@ -18,7 +20,7 @@ struct CurrentWeatherView: View {
                 .font(.system(size: 90))
                 .padding(.vertical, 8)
 
-            Text("\(Int(data.current.temperature.rounded()))°")
+            Text(temperatureUnit.string(fromCelsius: data.current.temperature))
                 .font(.system(size: 80, weight: .thin))
                 .foregroundStyle(.white)
 
@@ -26,17 +28,22 @@ struct CurrentWeatherView: View {
                 .font(.title3)
                 .foregroundStyle(.white.opacity(0.9))
 
+            Text("Feels like \(temperatureUnit.string(fromCelsius: data.current.feelsLike))")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.75))
+
             if let today = data.daily.first {
-                Text("H:\(Int(today.maxTemp.rounded()))°  L:\(Int(today.minTemp.rounded()))°")
+                Text("H:\(temperatureUnit.string(fromCelsius: today.maxTemp))  L:\(temperatureUnit.string(fromCelsius: today.minTemp))")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.white.opacity(0.85))
             }
 
             HStack(spacing: 24) {
-                WeatherStatChip(icon: "wind", label: "Wind", value: "\(Int(data.current.windSpeed)) km/h")
+                WeatherStatChip(icon: "wind", label: "Wind", value: windSpeedUnit.string(fromKmh: data.current.windSpeed))
                 if let today = data.daily.first {
                     WeatherStatChip(icon: "umbrella.fill", label: "Rain", value: "\(today.precipitationChance)%")
                 }
+                WeatherStatChip(icon: "humidity.fill", label: "Humidity", value: "\(data.current.humidity)%")
             }
             .padding(.top, 12)
         }
